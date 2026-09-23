@@ -63,6 +63,9 @@ struct ContentView: View {
         }
         .sensoryFeedback(.success, trigger: waterFeedback)
         .task {
+            #if DEBUG
+            plant_alertApp.seedUITestDataIfRequested(in: modelContext)
+            #endif
             // Reminders are the whole point of the app, so ask up front.
             if await NotificationManager.shared.authorizationStatus() == .notDetermined {
                 _ = await NotificationManager.shared.requestAuthorization()

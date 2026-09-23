@@ -33,10 +33,6 @@ struct plant_alertApp: App {
                 configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
             )
         }
-
-        #if DEBUG
-        Self.seedUITestDataIfRequested(in: modelContainer)
-        #endif
     }
 
     #if DEBUG
@@ -45,10 +41,12 @@ struct plant_alertApp: App {
     ///
     /// DEBUG-only and opt-in by launch argument, so it can never run for a real
     /// user on a release build.
-    private static func seedUITestDataIfRequested(in container: ModelContainer) {
+    /// Called after launch, not from `init`: rendering an image during `init`
+    /// initialises UIKit before the window adopts the accent colour from the
+    /// asset catalog, which tints the whole app the system blue.
+    static func seedUITestDataIfRequested(in context: ModelContext) {
         guard ProcessInfo.processInfo.arguments.contains("-uiTestSeedPhoto") else { return }
 
-        let context = ModelContext(container)
         for plant in (try? context.fetch(FetchDescriptor<Plant>())) ?? [] {
             context.delete(plant)
         }
