@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import UIKit
 import Testing
 @testable import plant_alert
 
@@ -220,5 +221,140 @@ struct AppSettingsTests {
         #expect(settings.digestHour == 9)
         #expect(settings.digestMinute == 0)
         #expect(settings.remindersEnabled)
+    }
+}
+
+
+@Suite("Plant photos")
+struct PlantPhotoTests {
+
+    /// A real JPEG of a given pixel size, so downscaling is exercised for real.
+    private func makeJPEG(width: CGFloat, height: CGFloat) -> Data {
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { ctx in
+            UIColor.systemGreen.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            UIColor.systemBrown.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width / 2, height: height / 2))
+        }
+        return image.jpegData(compressionQuality: 1)!
+    }
+
+    @Test("A large photo is downscaled to the long-edge cap")
+    func downscalesLargePhoto() throws {
+        let original = makeJPEG(width: 3000, height: 2000)
+        let prepared = try #require(PlantImage.prepared(from: original))
+        let image = try #require(UIImage(data: prepared))
+
+        #expect(max(image.size.width, image.size.height) <= PlantImage.maxDimension)
+        // Aspect ratio must survive.
+        #expect(abs(image.size.width / image.size.height - 1.5) < 0.01)
+        #expect(prepared.count < original.count)
+    }
+
+    @Test("A small photo isn't upscaled")
+    func leavesSmallPhotoAlone() throws {
+        let original = makeJPEG(width: 300, height: 200)
+        let prepared = try #require(PlantImage.prepared(from: original))
+        let image = try #require(UIImage(data: prepared))
+
+        #expect(image.size.width == 300)
+        #expect(image.size.height == 200)
+    }
+
+    @Test("Data that isn't an image is rejected")
+    func rejectsNonImage() {
+        #expect(PlantImage.prepared(from: Data("not an image".utf8)) == nil)
+    }
+
+    @Test("Each photo gets its own storage path")
+    func storagePathsAreUnique() {
+        let id = UUID()
+        let first = PlantImage.storagePath(plantID: id, householdID: "our flat")
+        let second = PlantImage.storagePath(plantID: id, householdID: "our flat")
+
+        #expect(first != second, "a replacement must not reuse the old path")
+        // The household segment has to be URL-path safe.
+        #expect(!first.contains(" "))
+        #expect(first.hasSuffix(".jpg"))
+        #expect(first.contains(id.uuidString))
+    }
+
+    @Test("The image path travels in the payload")
+    func pathRoundTrips() throws {
+        let plant = Plant(name: "Fern", imagePath: "house/abc.jpg")
+        let payload = PlantPayload(plant: plant, householdID: "house")
+        let decoded = try JSONDecoder().decode(PlantPayload.self, from: JSONEncoder().encode(payload))
+
+        #expect(decoded.image_path == "house/abc.jpg")
+    }
+
+    @Test("A changed remote path drops the local bytes so they get re-fetched")
+    func newRemotePathClearsCachedBytes() throws {
+        let local = Plant(name: "Fern", imagePath: "house/old.jpg", imageData: Data([0x01, 0x02]))
+
+        var payload = PlantPayload(plant: local, householdID: "house")
+        payload.image_path = "house/new.jpg"
+        payload.updated_at = PostgresTimestamp.string(from: Date())
+        payload.apply(to: local)
+
+        #expect(local.imagePath == "house/new.jpg")
+        #expect(local.imageData == nil, "stale bytes must be dropped so the sync downloads the new photo")
+    }
+
+    @Test("An unchanged path keeps the photo rather than re-downloading it")
+    func samePathKeepsCachedBytes() throws {
+        let local = Plant(name: "Fern", imagePath: "house/same.jpg", imageData: Data([0x01, 0x02]))
+
+        let payload = PlantPayload(plant: local, householdID: "house")
+        payload.apply(to: local)
+
+        #expect(local.imagePath == "house/same.jpg")
+        #expect(local.imageData != nil)
+    }
+
+    @Test("Picking a photo flags an upload and orphans the old object")
+    func pickingPhotoQueuesUploadAndCleanup() {
+        let plant = Plant(name: "Fern", imagePath: "house/old.jpg", imageData: Data([0x09]))
+
+        var draft = PlantDraft(plant: plant)
+        draft.imageData = Data([0x0A, 0x0B])
+        draft.photoChanged = true
+        draft.apply(to: plant, householdID: "house")
+
+        #expect(plant.photoNeedsUpload)
+        #expect(plant.imagePath != "house/old.jpg", "a replacement needs a fresh path")
+        #expect(plant.orphanedImagePath == "house/old.jpg", "the old object should be queued for deletion")
+    }
+
+    @Test("Removing a photo clears it and queues the old object for deletion")
+    func removingPhotoClearsEverything() {
+        let plant = Plant(name: "Fern", imagePath: "house/old.jpg", imageData: Data([0x09]))
+
+        var draft = PlantDraft(plant: plant)
+        draft.imageData = nil
+        draft.photoChanged = true
+        draft.apply(to: plant, householdID: "house")
+
+        #expect(plant.imagePath == nil)
+        #expect(plant.imageData == nil)
+        #expect(plant.photoNeedsUpload == false)
+        #expect(plant.orphanedImagePath == "house/old.jpg")
+    }
+
+    @Test("Editing other fields leaves an untouched photo alone")
+    func untouchedPhotoSurvivesAnEdit() {
+        let plant = Plant(name: "Fern", imagePath: "house/keep.jpg", imageData: Data([0x09]))
+
+        var draft = PlantDraft(plant: plant)
+        draft.name = "Fern renamed"
+        draft.apply(to: plant, householdID: "house")
+
+        #expect(plant.name == "Fern renamed")
+        #expect(plant.imagePath == "house/keep.jpg")
+        #expect(plant.imageData != nil)
+        #expect(plant.photoNeedsUpload == false, "an untouched photo must not be re-uploaded")
+        #expect(plant.orphanedImagePath == nil)
     }
 }

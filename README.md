@@ -11,6 +11,11 @@ morning listing whatever is due.
 - **Shared through Supabase.** Both phones push to and pull from two Postgres
   tables. Conflicts resolve last-write-wins on `updated_at`; deletes are soft,
   so a removal propagates instead of being resurrected by the next pull.
+- **Photos live in Supabase Storage**, not in the table. Rows carry only an
+  `image_path`, which keeps them small enough that the app can keep pulling the
+  whole table on every sync. Each photo is downscaled to a 1024px long edge
+  before it is stored, and its path carries a fresh UUID so the other phone can
+  tell a replacement from the picture it already has.
 - **Reminders are local notifications.** The next 14 days of digests are
   scheduled ahead and rebuilt whenever anything changes — a notification's text
   is fixed when it is scheduled, so one repeating trigger could never name the
@@ -27,7 +32,8 @@ free Apple ID. Those entitlements have been stripped from
 ## Setup
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql).
+2. In the SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql). It
+   creates the tables and the `plant-photos` storage bucket.
 3. In **Project Settings → API**, copy the Project URL and the `anon` public key.
 4. In the app: **Settings** → paste both, and pick a household code.
 5. Enter the **same three values** on the second phone, tap **Sync now** on each.
@@ -39,6 +45,17 @@ RLS policy in the schema grants the anonymous role full access, which is what
 lets the app work without user accounts. Treat the household code as a password
 and pick something unguessable, or add real Supabase auth if you want the data
 properly locked down.
+
+### Upgrading an existing project
+
+If you ran an earlier version of the schema, add the photo support with:
+
+```sql
+alter table plants add column if not exists image_path text;
+```
+
+plus the `storage.buckets` and `storage.objects` statements at the end of
+`schema.sql`.
 
 ## Running it
 
@@ -59,7 +76,8 @@ xcodebuild test -project plant-alert.xcodeproj -scheme plant-alert \
 
 ```
 plant-alert/
-  Models/      Plant, WateringEvent, the editor's draft type, symbol/colour palette
+  Models/      Plant, WateringEvent, the editor's draft type, photo handling,
+               symbol/colour palette
   Services/    Settings, Supabase REST client, sync engine, notification scheduling
   Views/       Plant list, detail, editor, settings
 supabase/

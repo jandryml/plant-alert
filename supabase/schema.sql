@@ -17,7 +17,8 @@ create table if not exists plants (
   last_watered_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  is_removed boolean not null default false
+  is_removed boolean not null default false,
+  image_path text
 );
 
 create table if not exists watering_events (
@@ -45,3 +46,14 @@ create policy "anon full access" on plants
   for all to anon using (true) with check (true);
 create policy "anon full access" on watering_events
   for all to anon using (true) with check (true);
+
+-- Photos live in Storage, not in the table, so the rows stay small enough
+-- for the app to pull them all on every sync.
+insert into storage.buckets (id, name, public)
+  values ('plant-photos', 'plant-photos', false)
+  on conflict (id) do nothing;
+
+create policy "anon full access photos" on storage.objects
+  for all to anon
+  using (bucket_id = 'plant-photos')
+  with check (bucket_id = 'plant-photos');

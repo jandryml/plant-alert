@@ -22,7 +22,7 @@ struct PlantCard: View {
         HStack(spacing: 14) {
             Button(action: onOpen) {
                 HStack(spacing: 14) {
-                    PlantAvatar(symbolName: plant.symbolName, colorName: plant.colorName)
+                    PlantAvatar(plant: plant)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(plant.name.isEmpty ? "Unnamed plant" : plant.name)

@@ -51,6 +51,9 @@ final class SyncEngine {
         do {
             try await push(client: client, householdID: credentials.householdID, context: context)
             try await pull(client: client, context: context)
+            // Photos move after the rows, so a row always exists before the
+            // object it points at is fetched.
+            await syncPhotos(client: client, context: context)
             try context.save()
 
             let now = Date()
@@ -86,6 +89,43 @@ final class SyncEngine {
         if !eventsToSend.isEmpty {
             try await client.upsertEvents(eventsToSend.map { WateringEventPayload(event: $0, householdID: householdID) })
             for event in eventsToSend { event.needsUpload = false }
+        }
+    }
+
+    // MARK: - Photos
+
+    /// Moves photo bytes in both directions.
+    ///
+    /// Deliberately non-throwing: a photo that won't upload or download is a
+    /// missing picture, not a reason to fail the whole sync and leave the
+    /// watering data stale. Failed work keeps its flag and retries next time.
+    private func syncPhotos(client: SupabaseClient, context: ModelContext) async {
+        let plants = (try? context.fetch(FetchDescriptor<Plant>())) ?? []
+
+        for plant in plants {
+            // Clean up the object a replaced photo left behind. An object that
+            // is already gone 404s; either way there's no point retrying it.
+            if let orphan = plant.orphanedImagePath {
+                try? await client.deleteImage(at: orphan)
+                plant.orphanedImagePath = nil
+            }
+
+            if plant.photoNeedsUpload, let data = plant.imageData, let path = plant.imagePath {
+                do {
+                    try await client.uploadImage(data, to: path)
+                    plant.photoNeedsUpload = false
+                } catch {
+                    continue
+                }
+            }
+
+            // `apply(to:)` clears the bytes whenever the remote path differs,
+            // so a nil here means "this phone hasn't got this photo yet".
+            if let path = plant.imagePath, plant.imageData == nil, !plant.photoNeedsUpload {
+                if let data = try? await client.downloadImage(at: path) {
+                    plant.imageData = data
+                }
+            }
         }
     }
 

@@ -158,9 +158,10 @@ struct SetupGuideView: View {
                     .padding(12)
                     .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
 
-                step(3, "In Project Settings → API, copy the Project URL and the anon public key into this app's Settings.")
-                step(4, "Pick any household code you both agree on and enter the same one on both phones.")
-                step(5, "Tap Sync now on each phone. That's it.")
+                step(3, "Already had the tables from an earlier version? Run: alter table plants add column if not exists image_path text; — plus the storage bucket lines above.")
+                step(4, "In Project Settings → API, copy the Project URL and the anon public key into this app's Settings.")
+                step(5, "Pick any household code you both agree on and enter the same one on both phones.")
+                step(6, "Tap Sync now on each phone. That's it.")
 
                 Text("The anon key is safe to put in the app, but anyone who has it plus your household code could read your plants. Pick a household code that isn't guessable.")
                     .font(.footnote)
@@ -201,7 +202,8 @@ struct SetupGuideView: View {
       last_watered_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
-      is_removed boolean not null default false
+      is_removed boolean not null default false,
+      image_path text
     );
 
     create table if not exists watering_events (
@@ -229,6 +231,17 @@ struct SetupGuideView: View {
       for all to anon using (true) with check (true);
     create policy "anon full access" on watering_events
       for all to anon using (true) with check (true);
+
+    -- Photos live in Storage, not in the table, so the rows stay small enough
+    -- for the app to pull them all on every sync.
+    insert into storage.buckets (id, name, public)
+      values ('plant-photos', 'plant-photos', false)
+      on conflict (id) do nothing;
+
+    create policy "anon full access photos" on storage.objects
+      for all to anon
+      using (bucket_id = 'plant-photos')
+      with check (bucket_id = 'plant-photos');
     """
 }
 

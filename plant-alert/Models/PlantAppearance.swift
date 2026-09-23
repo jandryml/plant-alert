@@ -13,20 +13,41 @@ enum PlantAppearance {
     static let defaultSymbol = "leaf.fill"
     static let defaultColor = "green"
 
-    /// SF Symbols offered in the editor, loosely plant-shaped.
+    /// SF Symbols offered in the editor, grouped plant shapes first, then care
+    /// and weather, then character.
+    ///
+    /// SF Symbols has no cactus, flower or succulent glyph, so the genuinely
+    /// plant-shaped set is small and the rest stand in by association. Every
+    /// symbol the first version shipped is still here: dropping one would
+    /// silently change the icon of a plant already using it.
     static let symbols: [String] = [
+        // Foliage and plant shapes
         "leaf.fill",
-        "camera.macro",
         "tree.fill",
+        "camera.macro",
         "laurel.leading",
+        "laurel.trailing",
+        "allergens.fill",
         "fan.fill",
         "carrot.fill",
-        "sparkles",
+        "fossil.shell.fill",
+        "microbe.fill",
+        "atom",
+        "hexagon.fill",
+        // Water, light and weather
         "drop.fill",
+        "humidity.fill",
         "sun.max.fill",
+        "sun.min.fill",
+        "cloud.sun.fill",
+        "thermometer.sun.fill",
+        "wind",
+        "snowflake",
         "moon.stars.fill",
-        "flame.fill",
-        "star.fill"
+        // Character
+        "sparkles",
+        "star.fill",
+        "flame.fill"
     ]
 
     /// Ordered so the picker shows a pleasant spectrum.
@@ -47,9 +68,12 @@ enum PlantAppearance {
         palette.first { $0.name == name }?.color ?? palette[0].color
     }
 
-    /// Falls back to a known-good symbol so a value synced from a newer build
+    /// Falls back to a known-good symbol so a value synced from another build
     /// can never render an empty box.
+    ///
+    /// Checks the system rather than `symbols`, so a symbol this build doesn't
+    /// offer in the picker still renders if the other phone chose it.
     static func symbol(named name: String) -> String {
-        symbols.contains(name) ? name : defaultSymbol
+        UIImage(systemName: name) != nil ? name : defaultSymbol
     }
 }

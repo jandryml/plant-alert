@@ -5,26 +5,52 @@
 
 import SwiftUI
 
-/// The tinted circle that stands in for a plant everywhere in the app.
+/// The circle that stands in for a plant everywhere in the app: its photo when
+/// it has one, otherwise a tinted symbol.
 struct PlantAvatar: View {
     let symbolName: String
     let colorName: String
+    var imageData: Data?
+    /// Storage path, used only as the decode cache key.
+    var imageKey: String?
     var size: CGFloat = 46
 
     private var tint: Color { PlantAppearance.color(named: colorName) }
 
     var body: some View {
-        Circle()
-            .fill(tint.gradient.opacity(0.18))
-            .overlay {
-                Circle().strokeBorder(tint.opacity(0.28), lineWidth: 1)
+        Group {
+            if let photo = PlantImage.decoded(data: imageData, key: imageKey) {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Circle()
+                    .fill(tint.gradient.opacity(0.18))
+                    .overlay {
+                        Image(systemName: PlantAppearance.symbol(named: symbolName))
+                            .font(.system(size: size * 0.44, weight: .medium))
+                            .foregroundStyle(tint)
+                    }
             }
-            .overlay {
-                Image(systemName: PlantAppearance.symbol(named: symbolName))
-                    .font(.system(size: size * 0.44, weight: .medium))
-                    .foregroundStyle(tint)
-            }
-            .frame(width: size, height: size)
+        }
+        .frame(width: size, height: size)
+        .clipShape(.circle)
+        .overlay {
+            Circle().strokeBorder(tint.opacity(0.28), lineWidth: 1)
+        }
+    }
+}
+
+/// Convenience for the common case of showing a stored plant.
+extension PlantAvatar {
+    init(plant: Plant, size: CGFloat = 46) {
+        self.init(
+            symbolName: plant.symbolName,
+            colorName: plant.colorName,
+            imageData: plant.imageData,
+            imageKey: plant.imagePath,
+            size: size
+        )
     }
 }
 

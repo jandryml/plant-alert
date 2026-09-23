@@ -81,6 +81,7 @@ struct SupabaseClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         applyHeaders(to: &request)
+        request.timeoutInterval = 20
 
         let data = try await perform(request)
         return try decoder.decode([T].self, from: data)
@@ -105,9 +106,53 @@ struct SupabaseClient {
         applyHeaders(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.timeoutInterval = 20
         request.httpBody = try encoder.encode(payloads)
 
         _ = try await perform(request)
+    }
+
+    // MARK: Storage
+
+    /// Bucket the setup SQL creates. Private: reads go through the authenticated
+    /// object endpoint, same anon key as everything else.
+    static let photoBucket = "plant-photos"
+
+    /// Uploads (or replaces) a photo.
+    func uploadImage(_ data: Data, to path: String) async throws {
+        var request = URLRequest(url: storageURL(for: path))
+        request.httpMethod = "POST"
+        applyHeaders(to: &request)
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        // A retry after a half-finished upload would otherwise fail as a duplicate.
+        request.setValue("true", forHTTPHeaderField: "x-upsert")
+        request.httpBody = data
+        // Photos are far larger than a JSON row; the default 20s is tight on
+        // a slow connection.
+        request.timeoutInterval = 60
+
+        _ = try await perform(request)
+    }
+
+    func downloadImage(at path: String) async throws -> Data {
+        var request = URLRequest(url: storageURL(for: path))
+        request.httpMethod = "GET"
+        applyHeaders(to: &request)
+        request.timeoutInterval = 60
+
+        return try await perform(request)
+    }
+
+    func deleteImage(at path: String) async throws {
+        var request = URLRequest(url: storageURL(for: path))
+        request.httpMethod = "DELETE"
+        applyHeaders(to: &request)
+
+        _ = try await perform(request)
+    }
+
+    private func storageURL(for path: String) -> URL {
+        credentials.baseURL.appending(path: "storage/v1/object/\(Self.photoBucket)/\(path)")
     }
 
     // MARK: Plumbing
@@ -116,7 +161,6 @@ struct SupabaseClient {
         request.setValue(credentials.anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(credentials.anonKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 20
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {

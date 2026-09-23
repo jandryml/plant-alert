@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import PhotosUI
 
 /// Add or edit a plant.
 struct PlantEditorView: View {
@@ -16,9 +17,12 @@ struct PlantEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(SyncEngine.self) private var syncEngine
+    @Environment(AppSettings.self) private var settings
 
     private let mode: Mode
     @State private var draft: PlantDraft
+    @State private var pickedPhoto: PhotosPickerItem?
+    @State private var isLoadingPhoto = false
 
     init(mode: Mode) {
         self.mode = mode
@@ -45,6 +49,14 @@ struct PlantEditorView: View {
                         .textInputAutocapitalization(.words)
                     TextField("Room", text: $draft.room, prompt: Text("Room (optional)"))
                         .textInputAutocapitalization(.words)
+                }
+
+                Section {
+                    photoRow
+                } header: {
+                    Text("Photo")
+                } footer: {
+                    Text("Optional. Shown instead of the symbol, and shared with the other phone.")
                 }
 
                 Section("Look") {
@@ -98,6 +110,65 @@ struct PlantEditorView: View {
                     Button("Save", action: save)
                         .disabled(!draft.isValid)
                 }
+            }
+        }
+    }
+
+    // MARK: - Photo
+
+    @ViewBuilder
+    private var photoRow: some View {
+        HStack(spacing: 14) {
+            PlantAvatar(
+                symbolName: draft.symbolName,
+                colorName: draft.colorName,
+                imageData: draft.imageData,
+                // Not the storage path: within the editor the bytes change
+                // while the path does not, and a stale cache entry would pin
+                // the old picture on screen.
+                imageKey: nil,
+                size: 64
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
+                    Text(draft.imageData == nil ? "Choose photo" : "Replace photo")
+                }
+                if draft.imageData != nil {
+                    Button("Remove photo", role: .destructive) {
+                        withAnimation(.snappy) {
+                            draft.imageData = nil
+                            draft.photoChanged = true
+                            pickedPhoto = nil
+                        }
+                    }
+                    .font(.subheadline)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if isLoadingPhoto { ProgressView() }
+        }
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            loadPhoto(from: item)
+        }
+    }
+
+    /// Pulls the picked image out of the photo library and downscales it before
+    /// it ever reaches the model.
+    private func loadPhoto(from item: PhotosPickerItem) {
+        isLoadingPhoto = true
+        Task {
+            let raw = try? await item.loadTransferable(type: Data.self)
+            let prepared = raw.flatMap(PlantImage.prepared(from:))
+            await MainActor.run {
+                if let prepared {
+                    draft.imageData = prepared
+                    draft.photoChanged = true
+                }
+                isLoadingPhoto = false
             }
         }
     }
@@ -171,10 +242,10 @@ struct PlantEditorView: View {
         switch mode {
         case .create:
             let plant = Plant()
-            draft.apply(to: plant)
+            draft.apply(to: plant, householdID: settings.householdID)
             modelContext.insert(plant)
         case .edit(let plant):
-            draft.apply(to: plant)
+            draft.apply(to: plant, householdID: settings.householdID)
         }
         try? modelContext.save()
         dismiss()
@@ -189,5 +260,6 @@ struct PlantEditorView: View {
 #Preview {
     PlantEditorView(mode: .create)
         .environment(SyncEngine())
+        .environment(AppSettings(defaults: UserDefaults(suiteName: "preview") ?? .standard))
         .modelContainer(for: [Plant.self, WateringEvent.self], inMemory: true)
 }

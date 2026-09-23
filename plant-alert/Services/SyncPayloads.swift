@@ -23,6 +23,8 @@ struct PlantPayload: Codable {
     var created_at: String
     var updated_at: String
     var is_removed: Bool
+    /// Storage object path, or nil for a plant with no photo.
+    var image_path: String?
 }
 
 /// Mirrors a row of the `watering_events` table.
@@ -57,6 +59,7 @@ extension PlantPayload {
         created_at = PostgresTimestamp.string(from: plant.createdAt)
         updated_at = PostgresTimestamp.string(from: plant.updatedAt)
         is_removed = plant.isRemoved
+        image_path = plant.imagePath
     }
 
     var identifier: UUID? { UUID(uuidString: id) }
@@ -78,6 +81,12 @@ extension PlantPayload {
         plant.createdAt = createdAt
         plant.updatedAt = updatedAt
         plant.isRemoved = is_removed
+        // Dropping the bytes when the path changes is what makes the sync
+        // notice a replaced photo: the download is driven by `imageData == nil`.
+        if plant.imagePath != image_path {
+            plant.imagePath = image_path
+            plant.imageData = nil
+        }
         plant.needsUpload = false
     }
 }

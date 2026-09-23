@@ -54,6 +54,10 @@ final class PlantFlowUITests: XCTestCase {
             roomField.tap()
             roomField.typeText("Living room")
         }
+        XCTAssertTrue(
+            app.buttons["Choose photo"].exists,
+            "the editor should offer to attach a photo"
+        )
         attach(app, "02-editor")
 
         app.buttons["Save"].tap()

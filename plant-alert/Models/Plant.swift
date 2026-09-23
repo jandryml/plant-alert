@@ -34,6 +34,24 @@ final class Plant {
     var lastWateredAt: Date?
     var createdAt: Date = Date()
 
+    /// Where the photo lives in Supabase Storage, or `nil` for no photo.
+    ///
+    /// The filename carries a fresh UUID each time the photo changes, so the
+    /// other phone can tell "new photo" from "same photo" by path alone.
+    var imagePath: String?
+
+    /// The photo itself. `externalStorage` keeps the blob out of the SQLite row
+    /// so ordinary queries stay cheap.
+    @Attribute(.externalStorage) var imageData: Data?
+
+    /// Set when the photo hasn't reached Storage yet. Separate from
+    /// `needsUpload` because an image upload is big and fails on its own.
+    var photoNeedsUpload: Bool = false
+
+    /// A replaced photo's old path, deleted from Storage on the next push so
+    /// replacements don't pile up orphaned objects.
+    var orphanedImagePath: String?
+
     /// Last local or remote modification; the tie-breaker when both people edit.
     var updatedAt: Date = Date()
     /// Set when this device changed the plant and the server hasn't been told yet.
@@ -55,7 +73,11 @@ final class Plant {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         needsUpload: Bool = true,
-        isRemoved: Bool = false
+        isRemoved: Bool = false,
+        imagePath: String? = nil,
+        imageData: Data? = nil,
+        photoNeedsUpload: Bool = false,
+        orphanedImagePath: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -71,6 +93,10 @@ final class Plant {
         self.updatedAt = updatedAt
         self.needsUpload = needsUpload
         self.isRemoved = isRemoved
+        self.imagePath = imagePath
+        self.imageData = imageData
+        self.photoNeedsUpload = photoNeedsUpload
+        self.orphanedImagePath = orphanedImagePath
     }
 }
 

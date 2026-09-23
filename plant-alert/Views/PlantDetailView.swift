@@ -64,7 +64,7 @@ struct PlantDetailView: View {
 
     private var header: some View {
         VStack(spacing: 14) {
-            PlantAvatar(symbolName: plant.symbolName, colorName: plant.colorName, size: 88)
+            PlantAvatar(plant: plant, size: 88)
 
             VStack(spacing: 6) {
                 Text(plant.name.isEmpty ? "Unnamed plant" : plant.name)
