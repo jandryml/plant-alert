@@ -121,4 +121,35 @@ final class PlantFlowUITests: XCTestCase {
         )
         attach(app, "08-setup-guide")
     }
+
+    /// The photo viewer, driven against a seeded plant so the system photo
+    /// picker never has to be involved.
+    func testTappingPhotoOpensItFullScreen() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-uiTestSeedPhoto"]
+        app.launch()
+        dismissNotificationPrompt()
+
+        let card = app.staticTexts["Photo Plant"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the seeded plant should be listed")
+        attach(app, "09-list-with-photo")
+
+        card.tap()
+
+        let avatar = app.buttons["Photo of Photo Plant"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5), "the photo should be a tappable button on detail")
+        attach(app, "10-detail-with-photo")
+
+        avatar.tap()
+
+        let close = app.buttons["Close photo"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "tapping the photo should open it full screen")
+        attach(app, "11-photo-full-screen")
+
+        close.tap()
+        XCTAssertTrue(
+            app.buttons["Water now"].waitForExistence(timeout: 5),
+            "closing the photo should return to the plant"
+        )
+    }
 }

@@ -18,8 +18,14 @@ struct PlantDetailView: View {
     @State private var isEditing = false
     @State private var isConfirmingDelete = false
     @State private var waterFeedback = 0
+    @State private var isShowingPhoto = false
 
     private var tint: Color { PlantAppearance.color(named: plant.colorName) }
+
+    /// The full-size photo, or nil when the plant only has a symbol.
+    private var photo: UIImage? {
+        PlantImage.decoded(data: plant.imageData, key: plant.imagePath)
+    }
 
     var body: some View {
         ScrollView {
@@ -58,13 +64,18 @@ struct PlantDetailView: View {
             Text("It will disappear on both phones.")
         }
         .sensoryFeedback(.success, trigger: waterFeedback)
+        .fullScreenCover(isPresented: $isShowingPhoto) {
+            if let photo {
+                PhotoViewer(image: photo, title: plant.name.isEmpty ? "this plant" : plant.name)
+            }
+        }
     }
 
     // MARK: - Sections
 
     private var header: some View {
         VStack(spacing: 14) {
-            PlantAvatar(plant: plant, size: 88)
+            avatar
 
             VStack(spacing: 6) {
                 Text(plant.name.isEmpty ? "Unnamed plant" : plant.name)
@@ -95,6 +106,31 @@ struct PlantDetailView: View {
         .frame(maxWidth: .infinity)
         .padding(20)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if photo != nil {
+            Button {
+                isShowingPhoto = true
+            } label: {
+                PlantAvatar(plant: plant, size: 88)
+                    .overlay(alignment: .bottomTrailing) {
+                        // A photo that enlarges isn't discoverable on its own.
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .background(tint, in: .circle)
+                            .overlay { Circle().strokeBorder(Color(.secondarySystemGroupedBackground), lineWidth: 2) }
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Photo of \(plant.name.isEmpty ? "this plant" : plant.name)")
+            .accessibilityHint("Opens the photo full screen")
+        } else {
+            PlantAvatar(plant: plant, size: 88)
+        }
     }
 
     private var stats: some View {

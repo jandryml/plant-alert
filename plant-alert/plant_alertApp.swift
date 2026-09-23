@@ -6,6 +6,7 @@
 import SwiftUI
 import SwiftData
 import UserNotifications
+import UIKit
 
 @main
 struct plant_alertApp: App {
@@ -32,7 +33,43 @@ struct plant_alertApp: App {
                 configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
             )
         }
+
+        #if DEBUG
+        Self.seedUITestDataIfRequested(in: modelContainer)
+        #endif
     }
+
+    #if DEBUG
+    /// Seeds one plant with a photo so the UI tests can exercise the photo
+    /// viewer without driving the system photo picker.
+    ///
+    /// DEBUG-only and opt-in by launch argument, so it can never run for a real
+    /// user on a release build.
+    private static func seedUITestDataIfRequested(in container: ModelContainer) {
+        guard ProcessInfo.processInfo.arguments.contains("-uiTestSeedPhoto") else { return }
+
+        let context = ModelContext(container)
+        for plant in (try? context.fetch(FetchDescriptor<Plant>())) ?? [] {
+            context.delete(plant)
+        }
+
+        let size = CGSize(width: 800, height: 600)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            UIColor.systemGreen.setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor.systemBrown.setFill()
+            ctx.fill(CGRect(x: 0, y: 400, width: 800, height: 200))
+        }
+
+        let plant = Plant(name: "Photo Plant", room: "Studio", lastWateredAt: Date())
+        plant.imageData = image.jpegData(compressionQuality: 0.8)
+        plant.imagePath = "uitest/seeded.jpg"
+        context.insert(plant)
+        try? context.save()
+    }
+    #endif
 
     var body: some Scene {
         WindowGroup {
