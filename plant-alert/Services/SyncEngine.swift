@@ -24,8 +24,16 @@ final class SyncEngine {
         case failed(String)
     }
 
+    /// Local watering history and deleted plants older than this are removed,
+    /// matching the server's nightly job in `schema.sql`.
+    static let retentionDays = 90
+
     private(set) var status: Status = .idle
     private let settings: AppSettings
+    /// Set when a sync is asked for while one is running, so the change that
+    /// prompted it goes out straight after instead of waiting for a later one.
+    private var isResyncRequested = false
+    private var lastPrunedAt: Date?
 
     init(settings: AppSettings = .shared) {
         self.settings = settings
@@ -43,14 +51,21 @@ final class SyncEngine {
             status = .notConfigured
             return
         }
-        guard !isSyncing else { return }
+        guard !isSyncing else {
+            isResyncRequested = true
+            return
+        }
 
         status = .syncing
-        let client = SupabaseClient(credentials: credentials)
 
         do {
-            try await push(client: client, householdID: credentials.householdID, context: context)
-            try await pull(client: client, context: context)
+            let session = try await SupabaseAuth.session(for: credentials)
+            let client = SupabaseClient(credentials: credentials, accessToken: session.accessToken)
+            let householdID = try await household(client: client, session: session, context: context)
+
+            try await push(client: client, householdID: householdID, context: context)
+            try await pull(client: client, householdID: householdID, context: context)
+            pruneLocalHistoryIfDue(context: context)
             // Photos move after the rows, so a row always exists before the
             // object it points at is fetched.
             await syncPhotos(client: client, context: context)
@@ -64,12 +79,62 @@ final class SyncEngine {
         } catch {
             status = .failed(error.localizedDescription)
         }
+
+        if isResyncRequested {
+            isResyncRequested = false
+            await sync(context: context)
+        }
     }
 
     /// Reschedules the digest from whatever is currently in the local store.
     func refreshReminders(context: ModelContext) async {
         let plants = (try? context.fetch(FetchDescriptor<Plant>())) ?? []
         await NotificationManager.shared.reschedule(plants: plants, settings: settings)
+    }
+
+    // MARK: - Household
+
+    /// The household this phone's user belongs to, joining it first if needed.
+    ///
+    /// Joining happens once per user and code; a new code, or a new user after
+    /// a lost session, joins again with the stored code.
+    private func household(client: SupabaseClient, session: SupabaseSession, context: ModelContext) async throws -> String {
+        if settings.memberUserID == session.userID, !settings.householdID.isEmpty {
+            return settings.householdID
+        }
+
+        let householdID = try await client.joinHousehold()
+        if householdID != settings.householdID {
+            try rehome(to: householdID, context: context)
+        }
+        settings.householdID = householdID
+        settings.memberUserID = session.userID
+        return householdID
+    }
+
+    /// Prepares everything on this phone for a household the server may have
+    /// none of it in: the first join, or a switch to a new code.
+    ///
+    /// Every row is queued for upload, and photos move into the new household's
+    /// Storage folder, the only one its members can reach. The filename is
+    /// kept, so both phones moving the same photo agree on where it goes.
+    private func rehome(to householdID: String, context: ModelContext) throws {
+        for plant in try context.fetch(FetchDescriptor<Plant>()) {
+            plant.needsUpload = true
+            guard let path = plant.imagePath else { continue }
+            let moved = PlantImage.path(path, inHousehold: householdID)
+            guard moved != path else { continue }
+            if plant.imageData != nil {
+                plant.imagePath = moved
+                plant.photoNeedsUpload = true
+            } else {
+                // Never downloaded, and the old folder is out of reach now.
+                plant.imagePath = nil
+            }
+        }
+        for event in try context.fetch(FetchDescriptor<WateringEvent>()) {
+            event.needsUpload = true
+        }
     }
 
     // MARK: - Upload
@@ -79,17 +144,49 @@ final class SyncEngine {
             FetchDescriptor<Plant>(predicate: #Predicate { $0.needsUpload })
         )
         if !plantsToSend.isEmpty {
+            // An edit made while the request is in flight bumps `updatedAt`;
+            // only rows still matching what was sent are done.
+            let sentStamps = plantsToSend.map(\.updatedAt)
             try await client.upsertPlants(plantsToSend.map { PlantPayload(plant: $0, householdID: householdID) })
-            for plant in plantsToSend { plant.needsUpload = false }
+            for (plant, stamp) in zip(plantsToSend, sentStamps) where plant.updatedAt == stamp {
+                plant.needsUpload = false
+            }
         }
 
         let eventsToSend = try context.fetch(
             FetchDescriptor<WateringEvent>(predicate: #Predicate { $0.needsUpload })
         )
         if !eventsToSend.isEmpty {
+            let sentStamps = eventsToSend.map(\.updatedAt)
             try await client.upsertEvents(eventsToSend.map { WateringEventPayload(event: $0, householdID: householdID) })
-            for event in eventsToSend { event.needsUpload = false }
+            for (event, stamp) in zip(eventsToSend, sentStamps) where event.updatedAt == stamp {
+                event.needsUpload = false
+            }
         }
+    }
+
+    // MARK: - Retention
+
+    /// Drops local rows older than `retentionDays`, at most once a day.
+    ///
+    /// The server prunes itself; this keeps the phone's copy in step. A row
+    /// pruned here before the server's nightly run may come back on a pull,
+    /// and simply goes again the next day.
+    private func pruneLocalHistoryIfDue(context: ModelContext) {
+        let now = Date()
+        if let lastPrunedAt, now.timeIntervalSince(lastPrunedAt) < 24 * 60 * 60 { return }
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -Self.retentionDays, to: now) else { return }
+
+        let oldEvents = (try? context.fetch(
+            FetchDescriptor<WateringEvent>(predicate: #Predicate { $0.wateredAt < cutoff })
+        )) ?? []
+        let oldTombstones = (try? context.fetch(
+            FetchDescriptor<Plant>(predicate: #Predicate { $0.isRemoved && $0.updatedAt < cutoff })
+        )) ?? []
+        for event in oldEvents { context.delete(event) }
+        for plant in oldTombstones { context.delete(plant) }
+
+        lastPrunedAt = now
     }
 
     // MARK: - Photos
@@ -131,9 +228,9 @@ final class SyncEngine {
 
     // MARK: - Download
 
-    private func pull(client: SupabaseClient, context: ModelContext) async throws {
-        let remotePlants = try await client.fetchPlants()
-        let remoteEvents = try await client.fetchEvents()
+    private func pull(client: SupabaseClient, householdID: String, context: ModelContext) async throws {
+        let remotePlants = try await client.fetchPlants(householdID: householdID)
+        let remoteEvents = try await client.fetchEvents(householdID: householdID)
 
         var plantsByID: [UUID: Plant] = [:]
         for plant in try context.fetch(FetchDescriptor<Plant>()) {

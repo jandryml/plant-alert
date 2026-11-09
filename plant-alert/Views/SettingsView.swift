@@ -53,9 +53,17 @@ struct SettingsView: View {
                     SecureField("Anon key", text: $settings.supabaseAnonKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Household code", text: $settings.householdID, prompt: Text("e.g. our-flat"))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    HStack {
+                        TextField("Household code", text: $settings.householdCode, prompt: Text("Household code"))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if settings.householdCode.isEmpty {
+                            Button("Generate") {
+                                settings.householdCode = AppSettings.generateHouseholdCode()
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
 
                     Button {
                         Task { await syncEngine.sync(context: modelContext) }
@@ -76,7 +84,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Sharing")
                 } footer: {
-                    Text("Both phones need the same three values. The household code is what keeps your plants separate from anyone else's.")
+                    Text("Both phones need the same three values. Generate the household code on one phone and type it on the other; it is the password to your plants, so it needs at least \(AppSettings.minimumCodeLength) characters.")
                 }
             }
             .navigationTitle("Settings")
@@ -143,27 +151,22 @@ struct SettingsView: View {
     }
 }
 
-/// Copy-pasteable instructions for standing up the free Supabase backend.
+/// How to stand up the free Supabase backend.
+///
+/// The SQL itself lives in `supabase/schema.sql` in the repository rather than
+/// here, so there is one copy to keep up to date.
 struct SetupGuideView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 step(1, "Create a free project at supabase.com. The free tier is enough for two people.")
-                step(2, "Open the SQL Editor and run the script below. It creates the two tables the app syncs.")
-
-                Text(SetupGuideView.schemaSQL)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
-
-                step(3, "Already had the tables from an earlier version? Run: alter table plants add column if not exists image_path text; — plus the storage bucket lines above.")
+                step(2, "In Authentication → Sign In / Providers, turn on \"Allow anonymous sign-ins\". Each phone signs in as its own user, without an email.")
+                step(3, "Open the SQL Editor and run supabase/schema.sql from the app's repository.")
                 step(4, "In Project Settings → API, copy the Project URL and the anon public key into this app's Settings.")
-                step(5, "Pick any household code you both agree on and enter the same one on both phones.")
+                step(5, "On one phone, tap Generate next to Household code. Type the same code on the other phone.")
                 step(6, "Tap Sync now on each phone. That's it.")
 
-                Text("The anon key is safe to put in the app, but anyone who has it plus your household code could read your plants. Pick a household code that isn't guessable.")
+                Text("The anon key alone can't read anything. Only phones that joined with your household code can see your plants and photos, so keep the code to yourselves.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -186,63 +189,6 @@ struct SetupGuideView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-
-    static let schemaSQL = """
-    create table if not exists plants (
-      id uuid primary key,
-      household_id text not null,
-      name text not null default '',
-      species text not null default '',
-      room text not null default '',
-      notes text not null default '',
-      symbol_name text not null default 'leaf.fill',
-      color_name text not null default 'green',
-      interval_days int not null default 7,
-      amount_ml int not null default 250,
-      last_watered_at timestamptz,
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now(),
-      is_removed boolean not null default false,
-      image_path text
-    );
-
-    create table if not exists watering_events (
-      id uuid primary key,
-      household_id text not null,
-      plant_id uuid not null,
-      watered_at timestamptz not null default now(),
-      amount_ml int not null default 0,
-      person_name text not null default '',
-      note text not null default '',
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now(),
-      is_removed boolean not null default false
-    );
-
-    create index if not exists plants_household_idx
-      on plants (household_id);
-    create index if not exists watering_events_household_idx
-      on watering_events (household_id);
-
-    alter table plants enable row level security;
-    alter table watering_events enable row level security;
-
-    create policy "anon full access" on plants
-      for all to anon using (true) with check (true);
-    create policy "anon full access" on watering_events
-      for all to anon using (true) with check (true);
-
-    -- Photos live in Storage, not in the table, so the rows stay small enough
-    -- for the app to pull them all on every sync.
-    insert into storage.buckets (id, name, public)
-      values ('plant-photos', 'plant-photos', false)
-      on conflict (id) do nothing;
-
-    create policy "anon full access photos" on storage.objects
-      for all to anon
-      using (bucket_id = 'plant-photos')
-      with check (bucket_id = 'plant-photos');
-    """
 }
 
 #Preview {

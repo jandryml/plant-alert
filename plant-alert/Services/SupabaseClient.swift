@@ -9,7 +9,8 @@ struct SupabaseCredentials: Equatable {
     /// Project root, e.g. https://abcdefgh.supabase.co
     var baseURL: URL
     var anonKey: String
-    var householdID: String
+    /// Shared secret that admits a phone to the household.
+    var householdCode: String
 }
 
 enum SupabaseError: LocalizedError {
@@ -24,9 +25,11 @@ enum SupabaseError: LocalizedError {
             // 401/404 are overwhelmingly the two setup mistakes, so name them.
             switch status {
             case 401, 403:
-                return "Rejected by Supabase (\(status)). Check the anon key and the table policies."
+                return "Rejected by Supabase (\(status)). Check the anon key, and that you ran the setup SQL."
             case 404:
-                return "Table not found (404). Did you run the setup SQL?"
+                return "Not found (404). Did you run the setup SQL?"
+            case 422 where message.contains("anonymous"):
+                return "Anonymous sign-ins are off. Turn them on under Authentication in Supabase."
             default:
                 return message.isEmpty ? "Request failed (\(status))." : "Request failed (\(status)): \(message)"
             }
@@ -34,47 +37,69 @@ enum SupabaseError: LocalizedError {
     }
 }
 
-/// Minimal PostgREST client.
+/// Minimal PostgREST client, acting as one signed-in user.
 ///
 /// Hand-rolled on `URLSession` on purpose: the whole surface the app needs is
-/// two selects and two upserts, which is far less code than wiring the official
-/// SDK into the project as a package dependency.
+/// one RPC, two selects and two upserts, which is far less code than wiring
+/// the official SDK into the project as a package dependency.
 struct SupabaseClient {
     let credentials: SupabaseCredentials
+    /// The user's token from `SupabaseAuth`; the row policies key off it.
+    private let accessToken: String
     private let session: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(credentials: SupabaseCredentials, session: URLSession = .shared) {
+    init(credentials: SupabaseCredentials, accessToken: String, session: URLSession = .shared) {
         self.credentials = credentials
+        self.accessToken = accessToken
         self.session = session
+    }
+
+    // MARK: Household
+
+    /// Joins (or creates) the household for the code and returns its id.
+    /// Harmless to repeat.
+    func joinHousehold() async throws -> String {
+        var request = URLRequest(url: credentials.baseURL.appending(path: "rest/v1/rpc/join_household"))
+        request.httpMethod = "POST"
+        applyHeaders(to: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 20
+        request.httpBody = try encoder.encode(["code": credentials.householdCode])
+
+        let data = try await perform(request)
+        return try decoder.decode(String.self, from: data)
     }
 
     // MARK: Reads
 
-    func fetchPlants() async throws -> [PlantPayload] {
-        try await fetch(table: "plants")
+    func fetchPlants(householdID: String) async throws -> [PlantPayload] {
+        try await fetch(table: "plants", householdID: householdID)
     }
 
-    func fetchEvents() async throws -> [WateringEventPayload] {
-        try await fetch(table: "watering_events")
+    func fetchEvents(householdID: String) async throws -> [WateringEventPayload] {
+        try await fetch(table: "watering_events", householdID: householdID)
     }
 
     /// Pulls the household's whole table.
     ///
-    /// No incremental cursor: for two people and a shelf of plants the row count
-    /// is tiny, and a full pull sidesteps every clock-skew bug an
-    /// `updated_at > cursor` query would introduce.
-    private func fetch<T: Decodable>(table: String) async throws -> [T] {
+    /// No incremental cursor: the server prunes history after 90 days (see
+    /// `schema.sql`), so the row count stays small, and a full pull sidesteps every clock-skew
+    /// bug an `updated_at > cursor` query would introduce.
+    ///
+    /// Newest first, so if the table ever outgrows Supabase's default 1000-row
+    /// cap it is the oldest history that gets cut off, not the latest changes.
+    private func fetch<T: Decodable>(table: String, householdID: String) async throws -> [T] {
         var components = URLComponents(
             url: credentials.baseURL.appending(path: "rest/v1/\(table)"),
             resolvingAgainstBaseURL: false
         )
         components?.queryItems = [
             URLQueryItem(name: "select", value: "*"),
-            URLQueryItem(name: "household_id", value: "eq.\(credentials.householdID)"),
-            URLQueryItem(name: "order", value: "updated_at.asc"),
-            URLQueryItem(name: "limit", value: "2000")
+            URLQueryItem(name: "household_id", value: "eq.\(householdID)"),
+            URLQueryItem(name: "order", value: "updated_at.desc"),
+            URLQueryItem(name: "limit", value: "1000")
         ]
         guard let url = components?.url else { throw SupabaseError.badResponse }
 
@@ -115,7 +140,7 @@ struct SupabaseClient {
     // MARK: Storage
 
     /// Bucket the setup SQL creates. Private: reads go through the authenticated
-    /// object endpoint, same anon key as everything else.
+    /// object endpoint, and the policy only admits the household's own folder.
     static let photoBucket = "plant-photos"
 
     /// Uploads (or replaces) a photo.
@@ -159,11 +184,16 @@ struct SupabaseClient {
 
     private func applyHeaders(to request: inout URLRequest) {
         request.setValue(credentials.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(credentials.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
+        try await Self.send(request, session: session)
+    }
+
+    /// Sends a request and turns any non-2xx answer into a `SupabaseError`.
+    static func send(_ request: URLRequest, session: URLSession) async throws -> Data {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SupabaseError.badResponse }
         guard (200..<300).contains(http.statusCode) else {

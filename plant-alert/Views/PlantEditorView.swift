@@ -239,13 +239,21 @@ struct PlantEditorView: View {
     // MARK: - Save
 
     private func save() {
+        let plant: Plant
         switch mode {
         case .create:
-            let plant = Plant()
-            draft.apply(to: plant, householdID: settings.householdID)
+            plant = Plant()
             modelContext.insert(plant)
-        case .edit(let plant):
-            draft.apply(to: plant, householdID: settings.householdID)
+        case .edit(let existing):
+            plant = existing
+        }
+
+        let previousWatering = plant.lastWateredAt
+        draft.apply(to: plant, householdID: settings.householdID)
+        // A date entered here is a watering like any other: it belongs in the
+        // history, where undo can reach it.
+        if let watered = plant.lastWateredAt, watered != previousWatering {
+            PlantActions.logWatering(of: plant, at: watered, context: modelContext, settings: settings)
         }
         try? modelContext.save()
         dismiss()

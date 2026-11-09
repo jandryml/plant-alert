@@ -63,9 +63,6 @@ struct ContentView: View {
         }
         .sensoryFeedback(.success, trigger: waterFeedback)
         .task {
-            #if DEBUG
-            plant_alertApp.seedUITestDataIfRequested(in: modelContext)
-            #endif
             // Reminders are the whole point of the app, so ask up front.
             if await NotificationManager.shared.authorizationStatus() == .notDetermined {
                 _ = await NotificationManager.shared.requestAuthorization()
@@ -123,6 +120,8 @@ struct ContentView: View {
                 )
                 .contextMenu {
                     Button("Open", systemImage: "arrow.up.forward.square") { selectedPlant = plant }
+                    Button("Undo last watering", systemImage: "arrow.uturn.backward") { undoWatering(plant) }
+                        .disabled(plant.lastWateredAt == nil)
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         delete(plant)
                     }
@@ -169,16 +168,24 @@ struct ContentView: View {
             PlantActions.water(plant, context: modelContext, settings: settings)
         }
         waterFeedback += 1
-        Task {
-            await syncEngine.refreshReminders(context: modelContext)
-            await syncEngine.sync(context: modelContext)
+        syncAndReschedule()
+    }
+
+    private func undoWatering(_ plant: Plant) {
+        withAnimation(.snappy) {
+            PlantActions.undoLastWatering(plant, context: modelContext)
         }
+        syncAndReschedule()
     }
 
     private func delete(_ plant: Plant) {
         withAnimation(.snappy) {
             PlantActions.remove(plant, context: modelContext)
         }
+        syncAndReschedule()
+    }
+
+    private func syncAndReschedule() {
         Task {
             await syncEngine.refreshReminders(context: modelContext)
             await syncEngine.sync(context: modelContext)

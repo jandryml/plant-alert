@@ -69,14 +69,19 @@ enum PlantImage {
     /// The UUID suffix is what makes a replacement visible to the other phone
     /// and keeps the decode cache honest.
     static func storagePath(plantID: UUID, householdID: String) -> String {
-        "\(sanitized(householdID))/\(plantID.uuidString)-\(UUID().uuidString).jpg"
+        "\(folder(householdID))/\(plantID.uuidString)-\(UUID().uuidString).jpg"
     }
 
-    /// Household codes are user-chosen, so keep them to characters that need no
-    /// escaping in a URL path.
-    private static func sanitized(_ raw: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
-        let cleaned = String(raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
-        return cleaned.isEmpty ? "shared" : cleaned
+    /// The same photo filed under another household's folder.
+    static func path(_ path: String, inHousehold householdID: String) -> String {
+        let filename = path.split(separator: "/").last.map(String.init) ?? path
+        return "\(folder(householdID))/\(filename)"
+    }
+
+    /// The household's Storage folder, which the bucket policy checks. Before
+    /// the first join there is no household yet; `SyncEngine` moves such
+    /// photos into the real folder when the phone joins.
+    private static func folder(_ householdID: String) -> String {
+        householdID.isEmpty ? "unjoined" : householdID
     }
 }

@@ -15,10 +15,24 @@ struct PlantDetailView: View {
 
     let plant: Plant
 
+    /// A `@Query` rather than a fetch in `body`, so new waterings and rows
+    /// arriving from a sync both appear without the view having to be told.
+    @Query private var events: [WateringEvent]
+
     @State private var isEditing = false
     @State private var isConfirmingDelete = false
     @State private var waterFeedback = 0
     @State private var isShowingPhoto = false
+
+    init(plant: Plant) {
+        self.plant = plant
+        let plantID = plant.id
+        _events = Query(
+            filter: #Predicate<WateringEvent> { $0.plantID == plantID && !$0.isRemoved },
+            sort: \WateringEvent.wateredAt,
+            order: .reverse
+        )
+    }
 
     private var tint: Color { PlantAppearance.color(named: plant.colorName) }
 
@@ -46,7 +60,7 @@ struct PlantDetailView: View {
                 Menu {
                     Button("Edit", systemImage: "pencil") { isEditing = true }
                     Button("Undo last watering", systemImage: "arrow.uturn.backward") { undoWatering() }
-                        .disabled(plant.lastWateredAt == nil)
+                        .disabled(events.isEmpty)
                     Button("Delete plant", systemImage: "trash", role: .destructive) {
                         isConfirmingDelete = true
                     }
@@ -169,7 +183,7 @@ struct PlantDetailView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            WateringHistoryList(plantID: plant.id, tint: tint)
+            WateringHistoryList(events: events, tint: tint, onDelete: removeWatering)
         }
     }
 
@@ -195,6 +209,13 @@ struct PlantDetailView: View {
     private func undoWatering() {
         withAnimation(.snappy) {
             PlantActions.undoLastWatering(plant, context: modelContext)
+        }
+        syncAndReschedule()
+    }
+
+    private func removeWatering(_ event: WateringEvent) {
+        withAnimation(.snappy) {
+            PlantActions.removeWatering(event, of: plant, context: modelContext)
         }
         syncAndReschedule()
     }
@@ -235,23 +256,11 @@ private struct StatTile: View {
     }
 }
 
-/// Watering history for one plant.
-///
-/// A `@Query` rather than a fetch in `body`, so new waterings and rows arriving
-/// from a sync both appear without the view having to be told.
+/// Watering history for one plant; long-press a row to delete it.
 private struct WateringHistoryList: View {
+    let events: [WateringEvent]
     let tint: Color
-
-    @Query private var events: [WateringEvent]
-
-    init(plantID: UUID, tint: Color) {
-        self.tint = tint
-        _events = Query(
-            filter: #Predicate<WateringEvent> { $0.plantID == plantID && !$0.isRemoved },
-            sort: \WateringEvent.wateredAt,
-            order: .reverse
-        )
-    }
+    let onDelete: (WateringEvent) -> Void
 
     var body: some View {
         if events.isEmpty {
@@ -277,6 +286,12 @@ private struct WateringHistoryList: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 11)
+                    .contentShape(.rect)
+                    .contextMenu {
+                        Button("Delete watering", systemImage: "trash", role: .destructive) {
+                            onDelete(event)
+                        }
+                    }
 
                     if index < min(events.count, 50) - 1 {
                         Divider().padding(.leading, 16)
