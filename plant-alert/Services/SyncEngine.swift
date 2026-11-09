@@ -86,6 +86,29 @@ final class SyncEngine {
         }
     }
 
+    /// A sync that trusts none of the bookkeeping: rejoins the household, then
+    /// re-uploads every row and photo on this phone.
+    ///
+    /// For recovering after the server was wiped or something got stuck. A
+    /// normal sync runs first, so newer edits from the other phone are merged
+    /// in before the full upload rather than overwritten by it.
+    func forceSync(context: ModelContext) async {
+        settings.memberUserID = ""
+        await sync(context: context)
+        guard case .succeeded = status else { return }
+
+        for plant in (try? context.fetch(FetchDescriptor<Plant>())) ?? [] {
+            plant.needsUpload = true
+            if plant.imageData != nil, plant.imagePath != nil {
+                plant.photoNeedsUpload = true
+            }
+        }
+        for event in (try? context.fetch(FetchDescriptor<WateringEvent>())) ?? [] {
+            event.needsUpload = true
+        }
+        await sync(context: context)
+    }
+
     /// Reschedules the digest from whatever is currently in the local store.
     func refreshReminders(context: ModelContext) async {
         let plants = (try? context.fetch(FetchDescriptor<Plant>())) ?? []

@@ -14,6 +14,7 @@ struct SettingsView: View {
     @Environment(SyncEngine.self) private var syncEngine
 
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    @State private var isConfirmingWipe = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -86,6 +87,29 @@ struct SettingsView: View {
                 } footer: {
                     Text("Both phones need the same three values. Generate the household code on one phone and type it on the other; it is the password to your plants, so it needs at least \(AppSettings.minimumCodeLength) characters.")
                 }
+
+                Section {
+                    Button("Force full sync") {
+                        Task { await syncEngine.forceSync(context: modelContext) }
+                    }
+                    .disabled(!settings.isSyncConfigured || syncEngine.isSyncing)
+
+                    Button("Delete all local data", role: .destructive) {
+                        isConfirmingWipe = true
+                    }
+                    // Deleting rows a running sync is still writing to would
+                    // leave it saving objects that no longer exist.
+                    .disabled(syncEngine.isSyncing)
+                } header: {
+                    Text("Troubleshooting")
+                } footer: {
+                    Text("Force full sync rejoins the household and re-uploads every plant, watering and photo on this phone. Deleting local data clears this phone only; anything already synced comes back on the next sync.")
+                }
+            }
+            .confirmationDialog("Delete all plants on this phone?", isPresented: $isConfirmingWipe, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { wipeLocalData() }
+            } message: {
+                Text("Changes that haven't synced yet are lost. Your settings stay.")
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -128,6 +152,12 @@ struct SettingsView: View {
 
     private func refreshAuthorization() async {
         authorizationStatus = await NotificationManager.shared.authorizationStatus()
+    }
+
+    private func wipeLocalData() {
+        PlantActions.wipeLocalData(context: modelContext)
+        // With no plants left this clears the pending digests.
+        rescheduleReminders()
     }
 
     private func rescheduleReminders() {

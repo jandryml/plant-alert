@@ -120,6 +120,11 @@ create index if not exists watering_events_household_idx
 alter table plants enable row level security;
 alter table watering_events enable row level security;
 
+-- Explicit, since not every project grants new tables to the API roles by
+-- default; without these every request is a 403 before any policy runs.
+-- The policies below still decide which rows a user sees.
+grant select, insert, update, delete on table plants, watering_events to authenticated;
+
 drop policy if exists "anon full access" on plants;
 drop policy if exists "household members" on plants;
 create policy "household members" on plants

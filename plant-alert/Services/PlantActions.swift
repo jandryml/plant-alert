@@ -77,6 +77,22 @@ enum PlantActions {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    /// Deletes every plant and watering from this phone, and nothing else.
+    ///
+    /// A hard delete, not a soft one: nothing is uploaded, so the server keeps
+    /// its copy and the next sync brings synced plants back. Settings stay.
+    static func wipeLocalData(context: ModelContext) {
+        // One by one rather than a batch `delete(model:)`, which bypasses the
+        // context and can leave `@Query` lists showing deleted rows.
+        for event in (try? context.fetch(FetchDescriptor<WateringEvent>())) ?? [] {
+            context.delete(event)
+        }
+        for plant in (try? context.fetch(FetchDescriptor<Plant>())) ?? [] {
+            context.delete(plant)
+        }
+        try? context.save()
+    }
+
     /// Soft delete, so the removal reaches the other phone instead of being
     /// undone by the next pull.
     ///

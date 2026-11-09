@@ -75,6 +75,14 @@ struct SyncPayloadTests {
         #expect(copy.needsUpload == false)
     }
 
+    @Test("Empty fields are sent as null, so every row in a batch has the same keys")
+    func nilFieldsEncodeAsNull() throws {
+        let payload = PlantPayload(plant: Plant(name: "Fern"), householdID: "house")
+        let json = try #require(String(data: JSONEncoder().encode(payload), encoding: .utf8))
+        #expect(json.contains("\"image_path\":null"))
+        #expect(json.contains("\"last_watered_at\":null"))
+    }
+
     @Test("A watering event survives a round trip")
     func eventRoundTrips() throws {
         let plantID = UUID()

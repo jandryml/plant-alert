@@ -22,10 +22,12 @@ enum SupabaseError: LocalizedError {
         case .badResponse:
             return "The server sent something unexpected."
         case .http(let status, let message):
-            // 401/404 are overwhelmingly the two setup mistakes, so name them.
+            // 401/404 are overwhelmingly the two setup mistakes, so name them,
+            // but keep the server's reason: a 403 has several possible causes.
             switch status {
             case 401, 403:
-                return "Rejected by Supabase (\(status)). Check the anon key, and that you ran the setup SQL."
+                let reason = Self.serverMessage(in: message).map { " Supabase says: \($0)" } ?? ""
+                return "Rejected by Supabase (\(status)). Check the anon key, and that you ran the setup SQL.\(reason)"
             case 404:
                 return "Not found (404). Did you run the setup SQL?"
             case 422 where message.contains("anonymous"):
@@ -34,6 +36,15 @@ enum SupabaseError: LocalizedError {
                 return message.isEmpty ? "Request failed (\(status))." : "Request failed (\(status)): \(message)"
             }
         }
+    }
+
+    /// The human-readable part of a PostgREST, Auth or Storage error body.
+    private static func serverMessage(in body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return body.isEmpty ? nil : body
+        }
+        return (json["message"] ?? json["msg"] ?? json["error_description"] ?? json["error"]) as? String
     }
 }
 

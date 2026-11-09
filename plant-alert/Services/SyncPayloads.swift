@@ -62,6 +62,29 @@ extension PlantPayload {
         image_path = plant.imagePath
     }
 
+    /// Spelled out so a nil goes over the wire as `null` rather than a missing
+    /// key. PostgREST rejects a bulk upsert whose rows have different keys
+    /// (PGRST102), and a missing key would also leave a cleared photo or
+    /// watering date untouched on the server.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(household_id, forKey: .household_id)
+        try container.encode(name, forKey: .name)
+        try container.encode(species, forKey: .species)
+        try container.encode(room, forKey: .room)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(symbol_name, forKey: .symbol_name)
+        try container.encode(color_name, forKey: .color_name)
+        try container.encode(interval_days, forKey: .interval_days)
+        try container.encode(amount_ml, forKey: .amount_ml)
+        try container.encode(last_watered_at, forKey: .last_watered_at)
+        try container.encode(created_at, forKey: .created_at)
+        try container.encode(updated_at, forKey: .updated_at)
+        try container.encode(is_removed, forKey: .is_removed)
+        try container.encode(image_path, forKey: .image_path)
+    }
+
     var identifier: UUID? { UUID(uuidString: id) }
     var updatedAt: Date { PostgresTimestamp.date(from: updated_at) ?? .distantPast }
     var createdAt: Date { PostgresTimestamp.date(from: created_at) ?? Date() }
